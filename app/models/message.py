@@ -16,6 +16,8 @@ class MessageStatus(str, Enum):
 
     DRAFT = "draft"
     REVIEW_READY = "review_ready"
+    APPROVED = "approved"
+    REJECTED = "rejected"
 
 
 @dataclass(frozen=True)
@@ -29,6 +31,7 @@ class MessageDraft:
     status: str = MessageStatus.DRAFT.value
     assigned_agent: str | None = None
     dealership: str | None = None
+    rejection_reason: str | None = None
 
     def __post_init__(self) -> None:
         if not self.customer_name.strip():
@@ -43,3 +46,8 @@ class MessageDraft:
             raise ValueError("Assigned agent cannot be blank")
         if self.dealership is not None and not self.dealership.strip():
             raise ValueError("Dealership cannot be blank")
+        if self.status == MessageStatus.REJECTED.value:
+            if self.rejection_reason is None or not self.rejection_reason.strip():
+                raise ValueError("Rejected messages require a rejection reason")
+        elif self.rejection_reason is not None:
+            raise ValueError("Only rejected messages can have a rejection reason")
