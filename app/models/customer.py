@@ -24,6 +24,13 @@ class ServicePattern(str, Enum):
     ONCE_A_YEAR = "once a year"
 
 
+class CustomerLanguage(str, Enum):
+    """Languages supported for customer-facing reminder drafts."""
+
+    ENGLISH = "en"
+    SPANISH = "es"
+
+
 @dataclass(frozen=True)
 class Vehicle:
     """A customer's vehicle and its current odometer reading."""
@@ -58,6 +65,7 @@ class Customer:
     service_pattern: ServicePattern
     bdc_agent: str
     service_history: tuple["ServiceHistoryEntry", ...] = ()
+    language_preference: CustomerLanguage = CustomerLanguage.ENGLISH
 
     def __post_init__(self) -> None:
         if not self.customer_name.strip():
@@ -70,3 +78,5 @@ class Customer:
             raise ValueError("Dealership must be Chevrolet or Kia")
         if self.bdc_agent not in BDC_AGENTS:
             raise ValueError("BDC agent is not recognized")
+        if not isinstance(self.language_preference, CustomerLanguage):
+            raise ValueError("Customer language preference is not supported")

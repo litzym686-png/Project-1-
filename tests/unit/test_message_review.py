@@ -1,8 +1,10 @@
 from datetime import date
+from dataclasses import replace
 
 import pytest
 
 from app.data.seed_customers import FICTIONAL_CUSTOMERS
+from app.models.customer import CustomerLanguage
 from app.models.message import MessageStatus
 from app.services.message_review import (
     approve_draft,
@@ -83,3 +85,17 @@ def test_review_service_does_not_send_external_messages():
 
     assert approved.channel == draft.channel
     assert approved.contact == draft.contact
+
+
+def test_language_aware_draft_keeps_routing_and_review_workflow():
+    customer = FICTIONAL_CUSTOMERS[0]
+    spanish_customer = replace(customer, language_preference=CustomerLanguage.SPANISH)
+    draft = generate_service_reminder(spanish_customer, date(2027, 1, 1))
+
+    routed = route_message_drafts((spanish_customer,), (draft,))[0]
+    approved = approve_draft(routed)
+
+    assert "Hola Fictional Customer 01" in approved.body
+    assert approved.assigned_agent == spanish_customer.bdc_agent
+    assert approved.dealership == spanish_customer.dealership
+    assert approved.status == MessageStatus.APPROVED.value

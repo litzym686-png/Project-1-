@@ -3,6 +3,7 @@ from datetime import date
 from app.models.customer import Customer, ServicePattern, Vehicle
 from app.models.service_history import ServiceHistoryEntry
 from app.services.customer_service import expected_service_date
+from app.services.dashboard import DashboardState
 
 
 def _customer(history):
@@ -28,3 +29,23 @@ def test_latest_history_entry_controls_next_expected_service_date():
     )
 
     assert expected_service_date(customer) == date(2025, 9, 30)
+
+
+def test_dashboard_service_visit_recalculates_expected_date():
+    dashboard = DashboardState(
+        customers=(_customer(()),),
+        current_date=date(2025, 7, 1),
+    )
+
+    updated = dashboard.record_service_visit(
+        "Test Customer",
+        date(2025, 6, 30),
+        2500,
+        "Oil change",
+        "Completed in shop",
+    )
+
+    assert updated.service_history[-1].mileage == 2500
+    assert updated.service_history[-1].notes == "Completed in shop"
+    assert dashboard.rows()[0].expected_date == date(2025, 12, 30)
+    assert dashboard.rows()[0].draft is None

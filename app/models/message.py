@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 from enum import Enum
 
+from app.models.customer import CustomerLanguage
+
 
 class MessageChannel(str, Enum):
     """Supported draft destinations."""
@@ -32,6 +34,7 @@ class MessageDraft:
     assigned_agent: str | None = None
     dealership: str | None = None
     rejection_reason: str | None = None
+    language_preference: CustomerLanguage = CustomerLanguage.ENGLISH
 
     def __post_init__(self) -> None:
         if not self.customer_name.strip():
@@ -46,6 +49,8 @@ class MessageDraft:
             raise ValueError("Assigned agent cannot be blank")
         if self.dealership is not None and not self.dealership.strip():
             raise ValueError("Dealership cannot be blank")
+        if not isinstance(self.language_preference, CustomerLanguage):
+            raise ValueError("Message language preference is not supported")
         if self.status == MessageStatus.REJECTED.value:
             if self.rejection_reason is None or not self.rejection_reason.strip():
                 raise ValueError("Rejected messages require a rejection reason")

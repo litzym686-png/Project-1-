@@ -80,3 +80,16 @@ This repository uses **Spec-Driven Development**. Before writing code, you and y
 * **What it does:** Explicitly forces GitHub Copilot to use your root `AGENTS.md` and `requirements.md` files as its source of truth.
 * **Why it's here:** Copilot does not naturally read root agent files by default. This file bridges that gap so Copilot Chat and inline completions respect your rules.
 
+## Local Reminder Dashboard
+
+Run the dependency-free, in-memory demonstration from the repository root:
+
+```text
+python -m app.dashboard
+```
+
+Open `http://127.0.0.1:8000` to filter the 20 fictional customers by dealership,
+BDC agent, or language. The page previews due and holiday-deferred English/Spanish
+reminders and supports review, approval/rejection, queueing, and simulated-send
+actions. It never sends SMS/email or calls an external provider; restart the
+process to reset the in-memory state.
