@@ -2,12 +2,13 @@
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
-from datetime import date
+from datetime import date, time
 
 from app.data.seed_customers import FICTIONAL_CUSTOMERS
 from app.models.customer import Customer, CustomerLanguage
+from app.models.appointment import Appointment
 from app.models.holiday import HolidayCalendar, HolidayClosure
-from app.models.message import MessageDraft
+from app.models.message import MessageChannel, MessageDraft, MessageStatus
 from app.models.outbox import OutboxMessage
 from app.models.service_history import ServiceHistoryEntry
 from app.services.customer_service import expected_service_date, is_customer_due
@@ -73,11 +74,54 @@ class DashboardState:
             for draft in route_message_drafts(self.customers, generated)
         }
         self._outbox: tuple[OutboxMessage, ...] = ()
+        self._appointments = self._demo_appointments()
 
     @property
     def outbox(self) -> tuple[OutboxMessage, ...]:
         """Return the immutable simulated outbox snapshot."""
         return self._outbox
+
+    @property
+    def appointments(self) -> tuple[Appointment, ...]:
+        """Return scheduled appointments in chronological order."""
+        return tuple(
+            sorted(
+                self._appointments,
+                key=lambda appointment: (
+                    appointment.scheduled_date,
+                    appointment.scheduled_time,
+                ),
+            )
+        )
+
+    def schedule_appointment(
+        self,
+        customer_name: str,
+        scheduled_date: date,
+        scheduled_time,
+    ) -> Appointment:
+        """Schedule an existing customer for a validated date and time."""
+        if scheduled_date is None or scheduled_time is None:
+            raise ValueError("Appointment date and time are required")
+        customer = self.customers[self._customer_index(customer_name)]
+        appointment = Appointment(
+            customer_name=customer.customer_name,
+            vin=customer.vehicle.vin,
+            dealership=customer.dealership,
+            assigned_agent=customer.bdc_agent,
+            scheduled_date=scheduled_date,
+            scheduled_time=scheduled_time,
+        )
+        self._appointments = tuple(
+            existing
+            for existing in self._appointments
+            if not (
+                existing.customer_name == customer_name
+                and existing.scheduled_date == scheduled_date
+                and existing.scheduled_time == scheduled_time
+            )
+        ) + (appointment,)
+        return appointment
 
     def rows(
         self,
@@ -107,6 +151,43 @@ class DashboardState:
         rejected = reject_draft(draft, reason)
         self._drafts[customer_name] = rejected
         return rejected
+
+    def save_draft(
+        self,
+        customer_name: str,
+        body: str,
+        language: CustomerLanguage,
+    ) -> MessageDraft:
+        """Save editable Service Center copy as an unapproved draft."""
+        customer = self.customers[self._customer_index(customer_name)]
+        draft = MessageDraft(
+            customer_name=customer.customer_name,
+            contact=customer.email,
+            channel=MessageChannel.EMAIL,
+            body=body,
+            status=MessageStatus.DRAFT.value,
+            assigned_agent=customer.bdc_agent,
+            dealership=customer.dealership,
+            language_preference=language,
+        )
+        self._drafts[customer_name] = draft
+        return draft
+
+    def send_message(
+        self,
+        customer_name: str,
+        body: str,
+        language: CustomerLanguage,
+    ) -> OutboxMessage:
+        """Approve, queue, and simulate-send edited Service Center copy."""
+        self.save_draft(customer_name, body, language)
+        self._drafts[customer_name] = replace(
+            self._drafts[customer_name],
+            status=MessageStatus.REVIEW_READY.value,
+        )
+        self.approve(customer_name)
+        self.queue(customer_name)
+        return self.simulate_send(customer_name)
 
     def queue(self, customer_name: str) -> OutboxMessage:
         """Queue an approved customer draft in the simulated outbox."""
@@ -205,3 +286,20 @@ class DashboardState:
         for dealership, calendar in self.holiday_calendars.items():
             if dealership != calendar.dealership:
                 raise ValueError("Holiday calendar mapping does not match dealership")
+
+    def _demo_appointments(self) -> tuple[Appointment, ...]:
+        """Create clearly marked demo appointments from existing customers."""
+        demo = []
+        for offset, customer in enumerate(self.customers[:3]):
+            demo.append(
+                Appointment(
+                    customer_name=customer.customer_name,
+                    vin=customer.vehicle.vin,
+                    dealership=customer.dealership,
+                    assigned_agent=customer.bdc_agent,
+                    scheduled_date=date(2027, 1, 4 + offset),
+                    scheduled_time=time(9 + offset, 0),
+                    is_demo=True,
+                )
+            )
+        return tuple(demo)

@@ -7,6 +7,17 @@ from app.models.holiday import HolidayCalendar, HolidayClosure
 from app.models.message import MessageChannel, MessageDraft
 from app.services.customer_service import expected_service_date, is_customer_due
 
+_ENGLISH_REMINDER_TEMPLATE = (
+    "Hello {name}, your {year} {make} {model} is due for service. "
+    "Please contact {dealership} to schedule an appointment. "
+    "The expected service date was {expected_date}."
+)
+_SPANISH_REMINDER_TEMPLATE = (
+    "Hola {name}, su {year} {make} {model} necesita servicio. "
+    "Comuníquese con {dealership} para programar una cita. "
+    "La fecha de servicio prevista era {expected_date}."
+)
+
 
 def generate_service_reminder(
     customer: Customer,
@@ -59,18 +70,18 @@ def _reminder_body(
             f"{closure.name}, so this reminder is deferred to "
             f"{deferred_date.isoformat()}."
         )
-    if customer.language_preference is CustomerLanguage.SPANISH:
-        return (
-            f"Hola {customer.customer_name}, su {customer.vehicle.year} "
-            f"{customer.vehicle.make} {customer.vehicle.model} necesita servicio. "
-            f"Comuníquese con {customer.dealership} para programar una cita. "
-            f"La fecha de servicio prevista era {expected_date.isoformat()}."
-        )
-    return (
-        f"Hello {customer.customer_name}, your {customer.vehicle.year} "
-        f"{customer.vehicle.make} {customer.vehicle.model} is due for service. "
-        f"Please contact {customer.dealership} to schedule an appointment. "
-        f"The expected service date was {expected_date.isoformat()}."
+    template = (
+        _SPANISH_REMINDER_TEMPLATE
+        if customer.language_preference is CustomerLanguage.SPANISH
+        else _ENGLISH_REMINDER_TEMPLATE
+    )
+    return template.format(
+        name=customer.customer_name,
+        year=customer.vehicle.year,
+        make=customer.vehicle.make,
+        model=customer.vehicle.model,
+        dealership=customer.dealership,
+        expected_date=expected_date.isoformat(),
     )
 
 

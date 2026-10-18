@@ -56,8 +56,11 @@ def test_missing_language_preference_defaults_to_english():
     draft = generate_service_reminder(customer, date(2025, 6, 1))
 
     assert draft is not None
-    assert draft.body.startswith("Hello Test Customer")
-    assert "due for service" in draft.body
+    assert draft.body == (
+        "Hello Test Customer, your 2024 Kia Sportage is due for service. "
+        "Please contact Kia to schedule an appointment. "
+        "The expected service date was 2025-05-28."
+    )
 
 
 def test_spanish_language_preference_generates_spanish_draft():
@@ -67,10 +70,11 @@ def test_spanish_language_preference_generates_spanish_draft():
     )
 
     assert draft is not None
-    assert draft.body.startswith("Hola Test Customer")
-    assert "necesita servicio" in draft.body
-    assert "Comuníquese con Kia" in draft.body
-    assert "La fecha de servicio prevista era 2025-04-15." in draft.body
+    assert draft.body == (
+        "Hola Test Customer, su 2024 Kia Sportage necesita servicio. "
+        "Comuníquese con Kia para programar una cita. "
+        "La fecha de servicio prevista era 2025-04-15."
+    )
 
 
 def test_invalid_language_preference_is_rejected():

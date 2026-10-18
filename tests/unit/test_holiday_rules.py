@@ -29,9 +29,11 @@ def test_due_closed_date_is_deferred_to_next_open_calendar_day():
     draft = generate_service_reminder(customer, date(2025, 6, 1), holiday_calendar=calendar)
 
     assert draft is not None
-    assert "expected service date was 2025-05-28" in draft.body
-    assert "deferred to 2025-05-30" in draft.body
-    assert "Kia inventory closure" in draft.body
+    assert draft.body == (
+        "Hello Test Customer, your expected service date was 2025-05-28. "
+        "Kia is closed for Kia inventory closure, so this reminder is deferred "
+        "to 2025-05-30."
+    )
 
 
 def test_due_normal_business_day_keeps_existing_reminder_copy():
@@ -71,7 +73,11 @@ def test_deferred_spanish_draft_survives_review_routing_and_outbox():
     queued = queue_approved_message(approved)
     sent = mark_simulated_sent(queued)
 
-    assert "se pospone al 2025-04-16" in sent.draft.body
+    assert sent.draft.body == (
+        "Hola Test Customer, su fecha de servicio prevista era 2025-04-15. "
+        "Kia estará cerrado por Cierre de Kia, así que este recordatorio se "
+        "pospone al 2025-04-16."
+    )
     assert sent.draft.language_preference is CustomerLanguage.SPANISH
     assert sent.draft.status == MessageStatus.APPROVED.value
     assert sent.status is OutboxStatus.SIMULATED_SENT

@@ -93,3 +93,46 @@ BDC agent, or language. The page previews due and holiday-deferred English/Spani
 reminders and supports review, approval/rejection, queueing, and simulated-send
 actions. It never sends SMS/email or calls an external provider; restart the
 process to reset the in-memory state.
+
+### Local-demo authentication
+
+The dashboard requires credentials supplied through environment variables; no
+password is stored in the repository. Set them before starting the server:
+
+PowerShell:
+
+```powershell
+$env:DASHBOARD_USERNAME = "choose-a-local-user"
+$env:DASHBOARD_PASSWORD = "choose-a-local-password"
+python -m app.dashboard
+```
+
+macOS/Linux:
+
+```text
+export DASHBOARD_USERNAME="choose-a-local-user"
+export DASHBOARD_PASSWORD="choose-a-local-password"
+python -m app.dashboard
+```
+
+Dashboard, Service Center, Appointments, Reports, and Settings are protected
+by an HttpOnly server-side session cookie. Use the visible **Logout** button on
+Settings to invalidate the session. The server sends no-cache headers for
+protected responses so a logged-out browser cannot restore them from history.
+
+### Windows one-click launcher
+
+Double-click `start_dashboard.bat` in the repository folder. It securely
+prompts for the password with masked input, uses the intended local username
+(`LitzyMartinez`), stops only an existing `python -m app.dashboard` listener on
+port 8000, and starts the current-worktree dashboard with both credentials in
+the child process environment. The password is never printed, stored in the
+repository, or written to a command-line argument. A blank password is
+rejected before an existing server is stopped. Leave the launcher window open,
+then open `http://127.0.0.1:8000` in a browser. Press `Ctrl+C` in the launcher
+window to stop the server.
+
+For a desktop shortcut, right-click `start_dashboard.bat`, choose **Show more
+options > Send to > Desktop (create shortcut)**, and launch the shortcut.
+The browser cannot start the server by itself; start the launcher first. Do not
+start a second launcher while one dashboard is already running on port 8000.

@@ -4,6 +4,31 @@ from datetime import date
 
 from app.models.customer import Customer, CustomerLanguage, ServicePattern, Vehicle
 
+_CHEVROLET_CONTACTS = (
+    ("Maya Rodriguez", "maya.rodriguez@fake.email.com", "(555) 010-1001"),
+    ("Ethan Parker", "ethan.parker@fake.email.com", "(555) 010-1002"),
+    ("Sofia Bennett", "sofia.bennett@fake.email.com", "(555) 010-1003"),
+    ("Ariana Collins", "ariana.collins@fake.email.com", "(555) 010-1005"),
+    ("Noah Anderson", "noah.anderson@fake.email.com", "(555) 010-1006"),
+    ("Valeria Thompson", "valeria.thompson@fake.email.com", "(555) 010-1007"),
+    ("Daniel Foster", "daniel.foster@fake.email.com", "(555) 010-1008"),
+    ("Saturo Gojo", "gojo.saturo@fake.email.com", "(555) 010-1015"),
+    ("Muzan Kibutsuji", "muzankibutsuji@fake.email.com", "(555) 010-1017"),
+    ("Yoichi Nagumo", "yoichinagumo@fake.email.com", "(555) 010-1019"),
+)
+_KIA_CONTACTS = (
+    ("Camila Brooks", "camila.brooks@fake.email.com", "(555) 010-1009"),
+    ("Inosuske Hashibira", "inosuskehashibira@fake.email.com", "(555) 010-1016"),
+    ("Jordan Ramirez", "jordan.ramirez@fake.email.com", "(555) 010-1010"),
+    ("Elena Morgan", "elena.morgan@fake.email.com", "(555) 010-1011"),
+    ("Marcus Sullivan", "marcus.sullivan@fake.email.com", "(555) 010-1012"),
+    ("Natalie Hayes", "natalie.hayes@fake.email.com", "(555) 010-1013"),
+    ("Tristan Mitchell", "lucas.mitchell@fake.email.com", "(555) 010-1004"),
+    ("Toji Fushiguro", "toji.fushiguro@fake.email.com", "(555) 010-1014"),
+    ("Tengen Uzui", "tengenuzui@fake.email.com", "(555) 010-1018"),
+    ("Taro Sakamato", "tarosakamato@fake.email.com", "(555) 010-1020"),
+)
+
 
 def _customer(
     number: int,
@@ -12,12 +37,19 @@ def _customer(
     pattern: ServicePattern,
 ) -> Customer:
     """Build one deterministic fictional customer record."""
+    contacts = _CHEVROLET_CONTACTS if dealership == "Chevrolet" else _KIA_CONTACTS
+    customer_name, email, phone = contacts[(number - 1) % len(contacts)]
     make = dealership
-    model = "Equinox" if dealership == "Chevrolet" else "Sportage"
+    models = (
+        ("Equinox", "Traverse", "Tahoe")
+        if dealership == "Chevrolet"
+        else ("Sportage", "Sorento", "Telluride")
+    )
+    model = models[(number - 1) % len(models)]
     return Customer(
-        customer_name=f"Fictional Customer {number:02d}",
-    email=f"customer{number:02d}@example.test",
-    phone=f"555-010-{number:02d}",
+    customer_name=customer_name,
+    email=email,
+    phone=phone,
     dealership=dealership,
     vehicle=Vehicle(
         make=make,

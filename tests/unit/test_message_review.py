@@ -95,7 +95,7 @@ def test_language_aware_draft_keeps_routing_and_review_workflow():
     routed = route_message_drafts((spanish_customer,), (draft,))[0]
     approved = approve_draft(routed)
 
-    assert "Hola Fictional Customer 01" in approved.body
+    assert "Hola Maya Rodriguez" in approved.body
     assert approved.assigned_agent == spanish_customer.bdc_agent
     assert approved.dealership == spanish_customer.dealership
     assert approved.status == MessageStatus.APPROVED.value
