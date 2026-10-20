@@ -49,6 +49,33 @@ def generate_service_reminder(
     )
 
 
+def generate_upcoming_reminder(
+    customer: Customer,
+    channel: MessageChannel = MessageChannel.EMAIL,
+) -> MessageDraft:
+    """Draft an editable heads-up for a customer's next expected service date."""
+    first_name = customer.customer_name.split()[0]
+    vehicle = f"{customer.vehicle.year} {customer.vehicle.make} {customer.vehicle.model}"
+    expected = expected_service_date(customer).isoformat()
+    if customer.language_preference is CustomerLanguage.SPANISH:
+        body = (
+            f"Hola {first_name}, su {vehicle} necesitará servicio alrededor del "
+            f"{expected}. Comuníquese con nosotros para programar su próxima cita."
+        )
+    else:
+        body = (
+            f"Hello {first_name}, your {vehicle} will be due for service around "
+            f"{expected}. Contact us to schedule your next appointment."
+        )
+    return MessageDraft(
+        customer_name=customer.customer_name,
+        contact=customer.email if channel is MessageChannel.EMAIL else customer.phone,
+        channel=channel,
+        body=body,
+        language_preference=customer.language_preference,
+    )
+
+
 def _reminder_body(
     customer: Customer,
     expected_date: date,

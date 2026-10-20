@@ -1,4 +1,4 @@
-import sqlite3
+﻿import sqlite3
 from datetime import date, time
 
 import pytest
@@ -174,3 +174,45 @@ def test_in_memory_state_also_completes_appointment():
     state.schedule_appointment(maya.customer_name, date(2027, 2, 1), time(9, 0))
     state.record_service_visit(maya.customer_name, date(2027, 2, 1), 99999, "Main Shop")
     assert [a.status for a in state.appointments if a.scheduled_date == date(2027, 2, 1)] == ["completed"]
+
+
+def test_recording_service_recalculates_next_date_and_refreshes_unsent_reminder(tmp_path):
+    from app.services.customer_service import expected_service_date
+    path = tmp_path / "d.db"
+    state = _state(path)
+    sofia = next(c for c in state.customers if c.customer_name == "Sofia Bennett")
+    state.record_service_visit("Sofia Bennett", date(2026, 10, 20), 60000, "Main Shop", None, None, "Tracy", "Oil")
+    for s in (state, _state(path)):
+        updated = next(c for c in s.customers if c.customer_name == "Sofia Bennett")
+        assert updated.service_pattern == sofia.service_pattern
+        assert expected_service_date(updated) == date(2027, 4, 20)
+        draft = next(r.draft for r in s.rows() if r.customer.customer_name == "Sofia Bennett")
+        assert draft.body == (
+            "Hello Sofia, your 2023 Chevrolet Tahoe will be due for service around 2027-04-20. "
+            "Contact us to schedule your next appointment.")
+        assert updated.vehicle.current_mileage == 60000
+        assert len(updated.service_history) == 1
+    assert state.outbox == () and state.message_history('Sofia Bennett') == ()
+    assert len(state.database.appointment_rows()) == 3
+
+
+@pytest.mark.parametrize("name,months", [("Maya Rodriguez", 3), ("Ethan Parker", 5),
+                                         ("Sofia Bennett", 6), ("Ariana Collins", 12)])
+def test_each_customer_keeps_its_own_interval(tmp_path, name, months):
+    from app.services.service_schedule import add_months
+    from app.services.customer_service import expected_service_date
+    state = _state(tmp_path / "d.db")
+    state.record_service_visit(name, date(2026, 10, 20), 70000, "Main Shop")
+    updated = next(c for c in state.customers if c.customer_name == name)
+    assert expected_service_date(updated) == add_months(date(2026, 10, 20), months)
+
+
+def test_recording_does_not_duplicate_visits_or_reopen_completed_appointments(tmp_path):
+    state = _state(tmp_path / "d.db")
+    name = state.customers[0].customer_name
+    state.schedule_appointment(name, date(2027, 2, 1), time(9, 0))
+    state.record_service_visit(name, date(2027, 2, 1), 50000, "Main Shop")
+    again = _state(tmp_path / "d.db")
+    again.rows()
+    assert len(again.customers[0].service_history) == 1
+    assert [a.status for a in again.appointments if a.scheduled_date == date(2027, 2, 1)] == ["completed"]

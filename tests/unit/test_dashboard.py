@@ -1,4 +1,4 @@
-import threading
+﻿import threading
 from datetime import date, time
 from http.client import HTTPConnection
 from http.server import HTTPServer
@@ -290,7 +290,7 @@ def test_appointments_page_has_views_filters_icons_and_existing_records():
     dashboard = DashboardState()
     from app.dashboard import _appointments_page
 
-    html = _appointments_page(dashboard, None, None, parse_qs(""))
+    html = _appointments_page(dashboard, None, None, parse_qs("date=2027-01-04"))
 
     assert "Appointments" in html
     assert all(label in html for label in ("Week", "Month", "List", "Previous", "Next", "Today"))
@@ -393,7 +393,7 @@ def test_record_service_visit_clears_existing_workflow_state():
     row = dashboard.rows()[0]
     assert updated.service_history[-1].service_type == "Brake inspection"
     assert row.expected_date == date(2025, 8, 31)
-    assert row.draft is None
+    assert 'will be due for service around 2025-08-31' in row.draft.body
     assert row.outbox is None
 
 
@@ -511,7 +511,7 @@ def test_auth_login_logout_protects_routes_and_preserves_state(server):
     cookie = headers["Set-Cookie"].split(";", 1)[0]
 
     status, _, appointments_html = _request_with_headers(
-        httpd, "GET", "/appointments", cookie=cookie
+        httpd, "GET", "/appointments?date=2027-01-04", cookie=cookie
     )
     assert status == 200
     assert "Maya Rodriguez" in appointments_html
@@ -531,7 +531,7 @@ def test_auth_login_logout_protects_routes_and_preserves_state(server):
     assert status == 303
     relogin_cookie = headers["Set-Cookie"].split(";", 1)[0]
     status, _, relogin_html = _request_with_headers(
-        httpd, "GET", "/appointments", cookie=relogin_cookie
+        httpd, "GET", "/appointments?date=2027-01-04", cookie=relogin_cookie
     )
     assert status == 200
     assert "Maya Rodriguez" in relogin_html
@@ -621,7 +621,7 @@ def test_service_visit_post_updates_expected_date_and_preserves_filters(server):
     assert (status, location) == (303, f"/?{FILTERS}")
     row = state.rows("Chevrolet", "Cassandra", CustomerLanguage.SPANISH)[0]
     assert row.expected_date == date(2027, 4, 1)
-    assert row.draft is None
+    assert 'alrededor del 2027-04-01' in row.draft.body
     _, _, html = _request(httpd, "GET", location)
     assert CUSTOMER in html
     assert 'value="service"' not in html
@@ -895,3 +895,30 @@ def test_invalid_mileage_and_service_type_on_schedule_are_rejected(server):
     assert status == 400
     status, _, _ = _request(httpd, "POST", "/", urlencode({**body, "service_type": "Detail"}))
     assert status == 400
+
+
+def test_calendar_defaults_to_today_and_navigation_stays_in_sync(server):
+    from datetime import date, timedelta
+    httpd, _ = server
+    today = date.today()
+    monday = today - timedelta(days=today.weekday())
+    _, _, html = _request(httpd, "GET", "/appointments")
+    assert today.strftime("%a %b %d") in html
+    assert f"view=week&date={monday.isoformat()}" in html
+    assert 'href="/appointments">Today' in html
+    for view in ("week", "month", "list"):
+        _, _, page = _request(httpd, "GET", f"/appointments?view={view}")
+        assert f"view={view}&date={(monday + timedelta(days=7)).isoformat()}" in page
+        assert f"view={view}&date={(monday - timedelta(days=7)).isoformat()}" in page
+    _, _, nxt = _request(httpd, "GET", f"/appointments?view=week&date={(monday + timedelta(days=7)).isoformat()}")
+    assert (monday + timedelta(days=7)).strftime("%a %b %d") in nxt
+    _, _, old = _request(httpd, "GET", "/appointments?date=2027-01-04")
+    assert "Jan 04" in old
+
+
+def test_new_appointment_date_defaults_to_today(server):
+    from datetime import date
+    httpd, _ = server
+    query = urlencode({"customer": CUSTOMER, "dealership": "Chevrolet", "agent": "Cassandra", "language": "es"})
+    _, _, page = _request(httpd, "GET", f"/service-center?{query}")
+    assert f'name="appointment_date" value="{date.today().isoformat()}"' in page

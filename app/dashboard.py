@@ -245,6 +245,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
 def run_dashboard(host: str = "127.0.0.1", port: int = 8000) -> None:
     """Serve the dashboard, backed by the local SQLite database, until interrupted."""
     DashboardHandler.state = DashboardState(
+        current_date=date.today(),
         holiday_calendars=demo_holiday_calendars(),
         history_store=ServiceHistoryStore(),
         database=Database(),
@@ -605,7 +606,7 @@ def _appointments_page(state, dealership, agent, query) -> str:
         and (not agent or appointment.assigned_agent == agent)
     )
     view = _single(query, "view") or "week"
-    selected_date = date.fromisoformat(_single(query, "date") or "2027-01-04")
+    selected_date = date.fromisoformat(_single(query, "date") or date.today().isoformat())
     anchor = selected_date
     monday = anchor - timedelta(days=anchor.weekday())
     picker_month = date.fromisoformat(
@@ -916,7 +917,7 @@ value="{escape(customer.customer_name)}">{fields}<div class="service-grid"><labe
 <section class="service-card"><h2>Schedule Appointment</h2><form method="post">
 <input type="hidden" name="return_to" value="service-center"><input type="hidden" name="customer_name"
 value="{escape(customer.customer_name)}">{fields}<div class="service-grid"><label>Appointment Date
-<input type="date" name="appointment_date" required></label><label>Appointment Time
+<input type="date" name="appointment_date" value="{date.today().isoformat()}" required></label><label>Appointment Time
 <input type="time" name="appointment_time" required></label><label>Mileage
 <input type="number" name="mileage" min="0" step="1" value="{customer.vehicle.current_mileage}"></label>
 <label>Service Type<select name="service_type" required>{service_type_options}</select></label>

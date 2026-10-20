@@ -24,7 +24,7 @@ from app.services.message_outbox import (
 )
 from app.services.message_review import approve_draft, reject_draft
 from app.services.message_routing import route_message_drafts
-from app.services.messaging import generate_service_reminder
+from app.services.messaging import generate_service_reminder, generate_upcoming_reminder
 from app.services.database import Database
 from app.services.service_history_store import ServiceHistoryStore
 
@@ -103,6 +103,14 @@ class DashboardState:
             draft.customer_name: draft
             for draft in route_message_drafts(self.customers, generated)
         }
+        for customer in self.customers:
+            if customer.service_history and customer.customer_name not in self._drafts:
+                self._drafts.update({
+                    draft.customer_name: draft
+                    for draft in route_message_drafts(
+                        (customer,), (generate_upcoming_reminder(customer),)
+                    )
+                })
         self._outbox: tuple[OutboxMessage, ...] = ()
         self._message_log: tuple[MessageLogEntry, ...] = ()
         self.composer_cleared: set[str] = set()
@@ -379,7 +387,9 @@ class DashboardState:
             self.current_date,
             holiday_calendar=self.holiday_calendars.get(updated.dealership),
         )
-        routed = route_message_drafts((updated,), (generated,))
+        routed = route_message_drafts(
+            (updated,), (generated or generate_upcoming_reminder(updated),)
+        )
         if routed:
             self._drafts[customer_name] = routed[0]
         return updated

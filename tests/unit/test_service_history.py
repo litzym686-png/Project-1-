@@ -1,4 +1,4 @@
-from datetime import date
+﻿from datetime import date
 
 from app.models.customer import Customer, ServicePattern, Vehicle
 from app.models.service_history import ServiceHistoryEntry
@@ -49,7 +49,7 @@ def test_dashboard_service_visit_recalculates_expected_date():
     assert updated.service_history[-1].mileage == 2500
     assert updated.service_history[-1].notes == "Completed in shop"
     assert dashboard.rows()[0].expected_date == date(2025, 12, 30)
-    assert dashboard.rows()[0].draft is None
+    assert 'around 2025-12-30' in dashboard.rows()[0].draft.body
 
 
 def test_service_history_persists_across_dashboard_state_restart(tmp_path):
