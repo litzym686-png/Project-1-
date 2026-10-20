@@ -176,6 +176,14 @@ class DashboardState:
                 scheduled_date, scheduled_time, service_type=appointment.service_type,
                 reason=appointment.reason, mileage=mileage,
             )
+            self.database.raise_mileage(customer.vehicle.vin, mileage)
+        if mileage > customer.vehicle.current_mileage:
+            index = self._customer_index(customer_name)
+            self.customers = (
+                *self.customers[:index],
+                replace(customer, vehicle=replace(customer.vehicle, current_mileage=mileage)),
+                *self.customers[index + 1 :],
+            )
         return appointment
 
     def rows(

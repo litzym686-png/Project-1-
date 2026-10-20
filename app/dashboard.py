@@ -94,8 +94,25 @@ class DashboardHandler(BaseHTTPRequestHandler):
             )
             location = f"{prefix}?{query}" if query else prefix
             self._respond("", status=303, headers={"Location": location})
-        except ValueError as error:
+        except (ValueError, KeyError) as error:
+            if _single(values, "action") == "schedule_appointment" and _single(values, "return_to") == "service-center":
+                self._respond(self._failed_appointment_page(values, str(error)), status=400)
+                return
             self._respond(f"<h1>Action failed</h1><p>{escape(str(error))}</p>", status=400)
+
+    def _failed_appointment_page(self, values: dict[str, list[str]], message: str) -> str:
+        """Redisplay the Service Center with the entered appointment values and an error."""
+        dealership, agent, language = _read_filters(values)
+        rows = self.state.rows(dealership, agent, language)
+        selected = _single(values, "customer_name")
+        form = {
+            key: _single(values, key)
+            for key in ("appointment_date", "appointment_time", "mileage", "service_type", "reason")
+        }
+        return _service_center_page(
+            self.state, rows, dealership, agent, language, selected, form,
+            message or "The appointment could not be saved.",
+        )
 
     def _authenticated(self) -> bool:
         """Return whether the request has a valid server-side session."""
@@ -805,8 +822,13 @@ def _service_center_page(
     agent,
     language,
     selected,
+    form: dict[str, str] | None = None,
+    error: str = "",
 ) -> str:
-    """Render the selected-customer Service Center workspace."""
+    """Render the selected-customer Service Center workspace.
+
+    ``form`` holds submitted appointment values to redisplay after a failed save.
+    """
     row = next(
         (candidate for candidate in rows if candidate.customer.customer_name == selected),
         None,
@@ -823,7 +845,17 @@ def _service_center_page(
     customer = row.customer
     draft = row.draft
     body = "" if customer.customer_name in state.composer_cleared else (draft.body if draft else "")
-    service_type_options = _service_type_options()
+    form = form or {}
+    form_date = form.get("appointment_date") or date.today().isoformat()
+    form_time = form.get("appointment_time", "")
+    form_mileage = form.get("mileage") if "mileage" in form else str(customer.vehicle.current_mileage)
+    form_reason = form.get("reason", "")
+    chosen_type = form.get("service_type")
+    service_type_options = "".join(
+        f'<option{" selected" if name == chosen_type else ""}>{escape(name)}</option>'
+        for name in SERVICE_TYPES
+    )
+    error_html = f'<p class="error" role="alert">{escape(error)}</p>' if error else ""
     draft_language = draft.language_preference if draft else customer.language_preference
     outbox_status = row.outbox.status.value if row.outbox else "not queued"
     history_html = "".join(
@@ -860,17 +892,18 @@ padding: .45rem; border: 1px solid #d7d0e5; border-radius: .35rem; }} button {{ 
 cursor: pointer; border: 0; border-radius: .35rem; background: #5b2aa0; color: white; }} .layout {{
 display: grid; grid-template-columns: minmax(15rem, .8fr) minmax(20rem, 1.2fr); gap: 1rem; }}
 .customer-card h2, .panel h2, .service-card h2 {{ margin-top: 0; }} .customer-card strong {{ color: #32145f; }}
-.details {{ line-height: 1.7; }} .message-panel textarea {{ width: 100%; min-height: 10rem; resize: vertical; }}
+.details {{ line-height: 1.7; }} .message-panel textarea {{ width: 100%; min-height: 15rem; resize: vertical; }}
 .message-actions {{ display: flex; justify-content: flex-end; gap: .35rem; margin-top: .5rem; }}
 .message-columns {{ display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 1rem; }}
-.history {{ max-height: 22rem; overflow-y: auto; border-left: 1px solid #ebe7f4; padding-left: 1rem; }}
+.history {{ max-height: 28rem; overflow-y: auto; border-left: 1px solid #ebe7f4; padding-left: 1rem; }}
 .history h3 {{ margin: 0 0 .5rem; font-size: 1rem; color: #32145f; }}
 .msg {{ margin-bottom: .7rem; }} .msg-head {{ display: flex; justify-content: space-between; gap: .5rem;
 font-size: .8rem; color: #52606d; }} .msg-body {{ margin-top: .2rem; padding: .5rem .7rem; border-radius: .5rem;
 background: #e9e4fb; overflow-wrap: anywhere; }} .msg-tag {{ margin-top: .15rem; font-size: .72rem; color: #667085; }}
 .msg.in .msg-body {{ background: #f0f1f4; }} .reply-form {{ margin-top: .8rem; display: grid; gap: .3rem; }}
 .service-grid {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .7rem; }}
-.service-grid .wide {{ grid-column: 1 / -1; }} @media (max-width: 850px) {{
+.service-grid .wide {{ grid-column: 1 / -1; }} .service-card .customer-card {{ box-shadow: none; background: #faf8ff; }}
+.error {{ margin: 0 0 .8rem; padding: .6rem .8rem; border-radius: .4rem; background: #fdecec; color: #8a1c1c; }} @media (max-width: 850px) {{
 .app {{ display: block; }} .sidebar {{ width: 100%; padding: 1rem; }} .brand {{ margin-bottom: .8rem; }}
 .nav {{ grid-template-columns: repeat(5, minmax(0, 1fr)); }} .nav a {{ font-size: .75rem; text-align: center; padding: .55rem .2rem; }}
 .main {{ padding: 1.2rem; }} .layout {{ grid-template-columns: 1fr; }} .message-columns {{ grid-template-columns: 1fr; }}
@@ -885,12 +918,6 @@ and record completed service.</p>
 <label>Language <select name="language"><option value="">All</option>{_options(CustomerLanguage, language)}</select></label>
 <label>Customer <select name="customer"><option value="">Select customer</option>{customer_options}</select></label>
 <button>Filter</button> <a href="/service-center">Reset</a></form>
-<div class="layout"><section class="customer-card"><h2>Selected Customer</h2><div class="details">
-<strong>{escape(customer.customer_name)}</strong><br>{escape(customer.email)}<br>{escape(customer.phone)}<br>
-{customer.vehicle.year} {escape(customer.vehicle.make)} {escape(customer.vehicle.model)}<br>
-VIN: {escape(customer.vehicle.vin)}<br>Dealership: {escape(customer.dealership)}<br>
-Assigned BDC Agent: {escape(customer.bdc_agent)}<br>Expected service date: {row.expected_date.isoformat()}<br>
-Reminder status: {escape(draft.status if draft else "none")}<br>Outbox: {escape(outbox_status)}</div></section>
 <section class="panel message-panel"><h2>Messages</h2><div class="message-columns"><form method="post">
 <input type="hidden" name="return_to" value="service-center"><input type="hidden" name="customer_name"
 value="{escape(customer.customer_name)}">{fields}<input type="hidden" name="message_language"
@@ -902,26 +929,24 @@ required>{escape(body)}</textarea></label><div class="message-actions">
 <form method="post" class="reply-form"><input type="hidden" name="return_to" value="service-center">
 <input type="hidden" name="customer_name" value="{escape(customer.customer_name)}">{fields}
 <label>Simulated customer reply (demo)<input name="reply_body" required></label>
-<button name="action" value="simulate_reply">Add Demo Reply</button></form></aside></div></section></div>
+<button name="action" value="simulate_reply">Add Demo Reply</button></form></aside></div></section>
 <script>(function(){{var h=document.querySelector(".history");if(h){{h.scrollTop=h.scrollHeight;}}}})();</script>
-<section class="service-card"><h2>Record Service</h2><form method="post">
-<input type="hidden" name="return_to" value="service-center"><input type="hidden" name="customer_name"
-value="{escape(customer.customer_name)}">{fields}<div class="service-grid"><label>Service Date
-<input type="date" name="service_date" required></label><label>Mileage
-<input type="number" name="mileage" min="0" step="1" value="{customer.vehicle.current_mileage}" required></label><label>Service Type
-<select name="service_type" required>{service_type_options}</select></label>
-<label>Technician<input name="technician" value="{escape(customer.bdc_agent)}"></label>
-<label class="wide">Reason for Visit<input name="reason"></label>
-<label class="wide">Notes<textarea name="notes"></textarea></label>
-</div><button name="action" value="service">Record Service</button></form></section>
-<section class="service-card"><h2>Schedule Appointment</h2><form method="post">
+<section class="service-card"><h2>Schedule Appointment</h2>{error_html}
+<div class="customer-card details">
+<strong>{escape(customer.customer_name)}</strong><br>{escape(customer.email)}<br>{escape(customer.phone)}<br>
+{customer.vehicle.year} {escape(customer.vehicle.make)} {escape(customer.vehicle.model)}<br>
+VIN: {escape(customer.vehicle.vin)}<br>Dealership: {escape(customer.dealership)}<br>
+Assigned BDC Agent: {escape(customer.bdc_agent)}<br>Last recorded mileage: {customer.vehicle.current_mileage:,}<br>
+Expected service date: {row.expected_date.isoformat()}<br>
+Reminder status: {escape(draft.status if draft else "none")}<br>Outbox: {escape(outbox_status)}</div>
+<form method="post">
 <input type="hidden" name="return_to" value="service-center"><input type="hidden" name="customer_name"
 value="{escape(customer.customer_name)}">{fields}<div class="service-grid"><label>Appointment Date
-<input type="date" name="appointment_date" value="{date.today().isoformat()}" required></label><label>Appointment Time
-<input type="time" name="appointment_time" required></label><label>Mileage
-<input type="number" name="mileage" min="0" step="1" value="{customer.vehicle.current_mileage}"></label>
+<input type="date" name="appointment_date" value="{escape(form_date)}" required></label><label>Appointment Time
+<input type="time" name="appointment_time" value="{escape(form_time)}" required></label><label>Mileage
+<input type="number" name="mileage" min="0" step="1" value="{escape(form_mileage)}"></label>
 <label>Service Type<select name="service_type" required>{service_type_options}</select></label>
-<label class="wide">Reason for Visit<input name="reason"></label>
+<label class="wide">Reason for Visit<input name="reason" value="{escape(form_reason)}"></label>
 </div><button name="action" value="schedule_appointment">Schedule Appointment</button></form></section>
 </main></div></body></html>"""
 

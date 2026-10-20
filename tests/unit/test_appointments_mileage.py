@@ -1,4 +1,4 @@
-﻿import sqlite3
+import sqlite3
 from datetime import date, time
 
 import pytest
@@ -216,3 +216,69 @@ def test_recording_does_not_duplicate_visits_or_reopen_completed_appointments(tm
     again.rows()
     assert len(again.customers[0].service_history) == 1
     assert [a.status for a in again.appointments if a.scheduled_date == date(2027, 2, 1)] == ["completed"]
+
+
+def _sofia(state):
+    return next(c for c in state.customers if c.customer_name == "Sofia Bennett")
+
+
+def _mileage_in_page(state, name):
+    from app.dashboard import _service_center_page
+    html = _service_center_page(state, state.rows(), None, None, None, name)
+    import re
+    return int(re.search(r'name="mileage" min="0" step="1" value="(\d+)"', html).group(1)), html
+
+
+def test_scheduling_saves_each_customers_latest_mileage_and_survives_reopen(tmp_path):
+    path = tmp_path / "d.db"
+    state = _state(path)
+    sofia, other = _sofia(state), state.customers[0]
+    other_before = other.vehicle.current_mileage
+    start = sofia.vehicle.current_mileage
+    assert _mileage_in_page(state, "Sofia Bennett")[0] == start
+
+    state.schedule_appointment("Sofia Bennett", date(2027, 5, 1), time(9, 0), "Main Shop", "x", str(start + 5000))
+    assert _mileage_in_page(state, "Sofia Bennett")[0] == start + 5000
+    state.schedule_appointment("Sofia Bennett", date(2027, 6, 1), time(9, 0), "Main Shop", "y", start + 10000)
+
+    reopened = _state(path)
+    assert _sofia(reopened).vehicle.current_mileage == start + 10000
+    assert _mileage_in_page(reopened, "Sofia Bennett")[0] == start + 10000
+    assert reopened.customers[0].vehicle.current_mileage == other_before
+    assert _mileage_in_page(reopened, other.customer_name)[0] == other_before
+    saved = {a.scheduled_date: a.mileage for a in reopened.appointments if a.vin == sofia.vehicle.vin}
+    assert saved[date(2027, 5, 1)] == start + 5000 and saved[date(2027, 6, 1)] == start + 10000
+
+
+def test_scheduling_with_a_lower_mileage_never_lowers_the_vehicle_mileage(tmp_path):
+    path = tmp_path / "d.db"
+    state = _state(path)
+    start = _sofia(state).vehicle.current_mileage
+    state.schedule_appointment("Sofia Bennett", date(2027, 5, 1), time(9, 0), None, None, start + 5000)
+    state.schedule_appointment("Sofia Bennett", date(2027, 5, 2), time(9, 0), None, None, start + 2000)
+    assert _sofia(_state(path)).vehicle.current_mileage == start + 5000
+
+
+def test_failed_schedule_does_not_change_saved_mileage(tmp_path):
+    path = tmp_path / "d.db"
+    state = _state(path)
+    start = _sofia(state).vehicle.current_mileage
+    for bad in ("-5", "abc", "12.5"):
+        with pytest.raises(ValueError):
+            state.schedule_appointment("Sofia Bennett", date(2027, 5, 1), time(9, 0), None, None, bad)
+    with pytest.raises(ValueError):
+        state.schedule_appointment("Sofia Bennett", None, None, None, None, 99999)
+    assert _sofia(_state(path)).vehicle.current_mileage == start
+    assert not [a for a in state.database.appointment_rows() if a["scheduled_date"] == "2027-05-01"]
+
+
+def test_service_center_page_has_only_messages_and_schedule_sections(tmp_path):
+    state = _state(tmp_path / "d.db")
+    _, html = _mileage_in_page(state, "Sofia Bennett")
+    main = html[html.index("<main"):]
+    assert "Selected Customer" not in html and "Record Service" not in html
+    assert main.count("<h2>") == 2
+    assert main.index("<h2>Messages</h2>") < main.index("<h2>Schedule Appointment</h2>")
+    for label in ("Sofia Bennett", "VIN:", "Assigned BDC Agent:", "Last recorded mileage:",
+                  "Expected service date:", "Reminder status:"):
+        assert label in main[main.index("<h2>Schedule Appointment</h2>"):]

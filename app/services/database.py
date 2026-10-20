@@ -227,6 +227,15 @@ class Database:
                 (entry.mileage, customer_id, entry.mileage),
             )
 
+    def raise_mileage(self, vin: str, mileage: int) -> None:
+        """Persist a higher current mileage on the customer's own record; never lower it."""
+        with self._connect() as connection:
+            connection.execute(
+                "UPDATE customers SET current_mileage = ? WHERE vin = ?"
+                " AND (current_mileage IS NULL OR current_mileage < ?)",
+                (mileage, vin, mileage),
+            )
+
     def visits_by_vin(self) -> dict[str, tuple[ServiceHistoryEntry, ...]]:
         """Return saved visits per VIN in the order they were recorded."""
         with self._connect() as connection:

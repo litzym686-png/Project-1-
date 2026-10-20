@@ -1,4 +1,4 @@
-﻿import threading
+import threading
 from datetime import date, time
 from http.client import HTTPConnection
 from http.server import HTTPServer
@@ -168,7 +168,7 @@ def test_service_center_renders_navigation_selection_editor_and_service_form():
     assert 'class="active"' in rendered
     assert ">Service Center</a>" in rendered
     assert '<a href="/">Customers</a>' not in rendered
-    assert "Selected Customer" in rendered
+    assert "Selected Customer" not in rendered
     assert "Test Customer" in rendered
     assert "message_body" in rendered
     assert "Save as Draft" in rendered
@@ -178,10 +178,15 @@ def test_service_center_renders_navigation_selection_editor_and_service_form():
     assert '<option>Main Shop</option><option>Express Shop</option>' in rendered
     assert '<select name="service_type" required>' in rendered
     assert 'name="description"' not in rendered
-    assert 'name="notes"' in rendered
     assert "document.querySelector(\".history\")" in rendered
-    assert 'name="technician"' in rendered
-    assert "Record Service" in rendered
+    assert "Record Service" not in rendered
+    assert 'name="technician"' not in rendered
+    assert 'value="service"' not in rendered
+    body = rendered[rendered.index("<main"):]
+    assert body.index("<h2>Messages</h2>") < body.index("<h2>Schedule Appointment</h2>")
+    assert body.count("<h2>") == 2
+    assert body.index("Last recorded mileage:") > body.index("<h2>Schedule Appointment</h2>")
+    assert body.index("Last recorded mileage:") < body.index('name="appointment_date"')
 
 
 def test_reports_page_filters_completed_history_by_vehicle_and_customer():
@@ -673,8 +678,8 @@ def test_service_center_get_and_save_draft_preserve_filters(server):
     status, _, html = _request(httpd, "GET", f"/service-center?{query}")
 
     assert status == 200
-    assert "Selected Customer" in html
-    assert "Save as Draft" in html
+    assert "Selected Customer" not in html
+    assert "Last recorded mileage:" in html
     assert "Send Message" in html
     assert "Main Shop" in html and "Express" in html
     assert '<label>Customer <select name="customer">' in html
@@ -867,8 +872,9 @@ def test_service_center_prefills_mileage_and_schedules_then_reports_reason(serve
     query = urlencode({"customer": CUSTOMER, "dealership": "Chevrolet", "agent": "Cassandra", "language": "es"})
     _, _, page = _request(httpd, "GET", f"/service-center?{query}")
     expected = f'name="mileage" min="0" step="1" value="{cust.vehicle.current_mileage}"'
-    assert page.count(expected) == 2
+    assert page.count(expected) == 1
     assert 'name="appointment_date"' in page
+    assert "Record Service" not in page
 
     base = {"customer_name": CUSTOMER, "return_to": "service-center", "mileage": "48000"}
     status, _, _ = _request(httpd, "POST", "/", urlencode({
@@ -922,3 +928,37 @@ def test_new_appointment_date_defaults_to_today(server):
     query = urlencode({"customer": CUSTOMER, "dealership": "Chevrolet", "agent": "Cassandra", "language": "es"})
     _, _, page = _request(httpd, "GET", f"/service-center?{query}")
     assert f'name="appointment_date" value="{date.today().isoformat()}"' in page
+
+
+def test_successful_schedule_resets_form_but_keeps_latest_mileage(server):
+    httpd, state = server
+    base = {"customer_name": CUSTOMER, "return_to": "service-center", "dealership": "Chevrolet"}
+    status, location, _ = _request(httpd, "POST", "/", urlencode({
+        **base, "action": "schedule_appointment", "appointment_date": "2027-03-03",
+        "appointment_time": "09:30", "service_type": "Express Shop", "reason": "Tire rotation",
+        "mileage": "99000"}))
+    assert status == 303
+    assert "customer=Noah+Anderson" in location
+    _, _, page = _request(httpd, "GET", "/service-center?customer=Noah+Anderson&dealership=Chevrolet")
+    assert 'name="mileage" min="0" step="1" value="99000"' in page
+    assert 'name="appointment_time" value=""' in page
+    assert "Tire rotation" not in page.split("Schedule Appointment</h2>")[1]
+    assert "Action failed" not in page
+
+
+def test_failed_schedule_keeps_entered_values_and_shows_error(server):
+    httpd, state = server
+    cust = [c for c in state.customers if c.customer_name == CUSTOMER][0]
+    before = cust.vehicle.current_mileage
+    status, _, html = _request(httpd, "POST", "/", urlencode({
+        "customer_name": CUSTOMER, "return_to": "service-center", "dealership": "Chevrolet",
+        "action": "schedule_appointment", "appointment_date": "2027-03-03",
+        "appointment_time": "09:30", "service_type": "Express Shop", "reason": "Keep me",
+        "mileage": "-4"}))
+    assert status == 400
+    assert 'role="alert"' in html and "Mileage must be" in html
+    assert 'value="Keep me"' in html and 'value="2027-03-03"' in html
+    assert 'value="09:30"' in html and 'value="-4"' in html
+    assert '<option selected>Express Shop</option>' in html
+    assert "<h2>Messages</h2>" in html
+    assert [c for c in state.customers if c.customer_name == CUSTOMER][0].vehicle.current_mileage == before
