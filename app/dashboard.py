@@ -11,11 +11,18 @@ from datetime import date, datetime, timedelta
 from urllib.parse import parse_qs, urlencode, urlparse
 
 from app.models.customer import BDC_AGENTS, DEALERSHIPS, CustomerLanguage
+from app.services.customer_service import expected_service_date
 from app.services.dashboard import DashboardState, demo_holiday_calendars
+from app.services.database import Database
+from app.services.service_history_store import ServiceHistoryStore
 
+SERVICE_TYPES = ("Main Shop", "Express Shop")
 
 class DashboardHandler(BaseHTTPRequestHandler):
     """Render and mutate one in-memory dashboard state."""
+
+    # The server is single-threaded; drop idle browser connections so one can't block it.
+    timeout = 10
 
     state = DashboardState(holiday_calendars=demo_holiday_calendars())
     sessions: dict[str, str] = {}
@@ -46,6 +53,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     self.state, rows, dealership, agent, language, selected
                 )
             )
+        elif parsed.path == "/reports":
+            self._respond(_reports_page(self.state, query))
         elif parsed.path == "/settings":
             self._respond(_settings_page())
         else:
@@ -180,21 +189,35 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 _language(_single(values, "message_language"))
                 or CustomerLanguage.ENGLISH,
             )
+        elif action == "simulate_reply":
+            self.state.simulate_reply(customer_name, _single(values, "reply_body"))
         elif action == "service":
+            service_type = _single(values, "service_type")
+            if service_type not in SERVICE_TYPES:
+                raise ValueError("Service type must be Main Shop or Express Shop")
             self.state.record_service_visit(
                 customer_name,
                 date.fromisoformat(_single(values, "service_date")),
-                int(_single(values, "mileage")),
-                _single(values, "service_type"),
+                _single(values, "mileage"),
+                service_type,
                 _single(values, "notes") or None,
+                None,
+                _single(values, "technician") or None,
+                _single(values, "reason") or None,
             )
         elif action == "schedule_appointment":
+            service_type = _single(values, "service_type")
+            if service_type and service_type not in SERVICE_TYPES:
+                raise ValueError("Service type must be Main Shop or Express Shop")
             self.state.schedule_appointment(
                 customer_name,
                 date.fromisoformat(_single(values, "appointment_date")),
                 datetime.strptime(
                     _single(values, "appointment_time"), "%H:%M"
                 ).time(),
+                service_type or None,
+                _single(values, "reason") or None,
+                _single(values, "mileage") or None,
             )
         else:
             raise ValueError("Unknown dashboard action")
@@ -220,7 +243,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
 
 def run_dashboard(host: str = "127.0.0.1", port: int = 8000) -> None:
-    """Serve the in-memory dashboard until interrupted."""
+    """Serve the dashboard, backed by the local SQLite database, until interrupted."""
+    DashboardHandler.state = DashboardState(
+        holiday_calendars=demo_holiday_calendars(),
+        history_store=ServiceHistoryStore(),
+        database=Database(),
+    )
     server = HTTPServer((host, port), DashboardHandler)
     print(f"Dashboard running at http://{host}:{port}")
     try:
@@ -450,6 +478,124 @@ def _summary_cards(rows) -> str:
     )
 
 
+def _reports_page(state: DashboardState, query) -> str:
+    """Render the persistent completed vehicle service history."""
+    search = _single(query, "q").strip()
+    dealership = _single(query, "dealership")
+    customer_name = _single(query, "customer")
+    visits = tuple(
+        (customer, entry)
+        for customer, entry in state.service_history()
+        if _history_matches(customer, entry, search, dealership, customer_name)
+    )
+    rows = "".join(_history_row(customer, entry) for customer, entry in visits)
+    customer_options = "".join(
+        f'<option value="{escape(customer.customer_name)}"'
+        f'{" selected" if customer.customer_name == customer_name else ""}>'
+        f'{escape(customer.customer_name)}</option>'
+        for customer in state.customers
+    )
+    selected_customer = next(
+        (customer for customer in state.customers if customer.customer_name == customer_name),
+        None,
+    )
+    vehicle_header = ""
+    if selected_customer:
+        vehicle = selected_customer.vehicle
+        next_date = expected_service_date(selected_customer)
+        vehicle_header = (
+            f'<section class="vehicle-header"><strong>{escape(selected_customer.customer_name)}</strong>'
+            f'<span>{escape(selected_customer.dealership)}</span>'
+            f'<span>{vehicle.year} {escape(vehicle.make)} {escape(vehicle.model)}</span>'
+            f'<span>VIN: {escape(vehicle.vin)}</span>'
+            f'<span>Current mileage: {vehicle.current_mileage:,} mi</span>'
+            f'<span>Last service: {selected_customer.last_service_date.isoformat()}</span>'
+            f'<span>Next expected service: {next_date.isoformat()}</span></section>'
+        )
+    empty_message = (
+        "No completed service visits have been recorded yet for this vehicle."
+        if selected_customer
+        else "No completed service visits match these filters."
+    )
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>Vehicle Service History</title>
+<style>
+* {{ box-sizing: border-box; }} body {{ margin: 0; font-family: system-ui, sans-serif;
+background: #f6f5fb; color: #182230; }} .app {{ display: flex; min-height: 100vh; }}
+.sidebar {{ width: 230px; flex: 0 0 230px; padding: 1.5rem 1rem; background: #32145f; color: white; }}
+.brand {{ font-size: 1.2rem; font-weight: 700; margin: 0 0 2rem; }} .nav {{ display: grid; gap: .35rem; }}
+.nav a {{ color: #e8ddff; padding: .7rem .8rem; border-radius: .45rem; text-decoration: none; }}
+.nav a.active, .nav a:hover {{ background: #5b2aa0; color: white; }} .nav-icon {{ width: 1rem;
+height: 1rem; margin-right: .55rem; vertical-align: -0.15rem; fill: none; stroke: currentColor;
+stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }} .main {{ width: 100%; padding: 2rem 2.5rem; }}
+h1 {{ margin: 0; color: #281047; }} .muted {{ color: #667085; }} .filters {{ display: flex;
+flex-wrap: wrap; align-items: end; gap: .7rem; padding: 1rem; margin: 1rem 0;
+background: white; border: 1px solid #ebe7f4; border-radius: .7rem; }} label {{ display: grid;
+gap: .25rem; color: #52606d; font-size: .85rem; flex: 1 1 11rem; }} input, select {{ padding: .45rem;
+border: 1px solid #d7d0e5; border-radius: .35rem; }} button, .reset {{ padding: .5rem .75rem;
+border: 0; border-radius: .35rem; background: #5b2aa0; color: white; text-decoration: none; cursor: pointer; }}
+.reset {{ background: #eef1f6; color: #344054; }} table {{ width: 100%; border-collapse: separate;
+border-spacing: 0; overflow: hidden; background: white; border: 1px solid #ebe7f4;
+border-radius: .7rem; box-shadow: 0 3px 12px #32145f12; }} th, td {{ padding: .7rem;
+border-bottom: 1px solid #e6e9ef; text-align: left; vertical-align: top; }} th {{ background: #faf9fd;
+color: #52606d; font-size: .78rem; letter-spacing: .04em; }} tr:last-child td {{ border-bottom: 0; }}
+td small {{ display: block; margin-top: .2rem; color: #667085; line-height: 1.4; }}
+.vehicle-header {{ display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: baseline;
+padding: 1rem; margin: 1rem 0; background: linear-gradient(100deg, #eef7ff, #f1ebff);
+border-left: 4px solid #3b82f6; border-radius: .55rem; }} .vehicle-header span {{ color: #52606d; }}
+@media (max-width: 850px) {{ .app {{ display: block; }} .sidebar {{ width: 100%; padding: 1rem; }}
+.nav {{ grid-template-columns: repeat(5, minmax(0, 1fr)); }} .nav a {{ font-size: .75rem;
+text-align: center; padding: .55rem .2rem; }} .main {{ padding: 1.2rem; }} table {{ display: block; overflow-x: auto; }} }}
+</style></head><body><div class="app"><aside class="sidebar"><p class="brand">Service Center</p>
+<nav class="nav" aria-label="Main navigation">{_nav("/reports")}</nav></aside><main class="main">
+<h1>Vehicle Service History</h1><p class="muted">Completed visits only; drafts and simulated messages are not service records.</p>
+<form class="filters" method="get"><label>Search customer, vehicle, or VIN
+<input name="q" value="{escape(search)}" placeholder="Search history"></label>
+<label>Dealership<select name="dealership"><option value="">All</option>{_options(DEALERSHIPS, dealership)}</select></label>
+<label>Customer<select name="customer"><option value="">All</option>{customer_options}</select></label>
+<button>Filter</button><a class="reset" href="/reports">Reset filters</a></form>
+<p class="muted">{len(visits)} completed visit{"s" if len(visits) != 1 else ""}. Reset filters never deletes recorded history.</p>
+{vehicle_header}
+{f'<table><thead><tr><th>CUSTOMER / DEALERSHIP</th><th>VEHICLE</th><th>SERVICE DATE</th><th>SERVICE</th><th>REASON FOR VISIT</th><th>TECHNICIAN</th><th>NOTES</th></tr></thead><tbody>{rows}</tbody></table>' if rows else '<section class="filters"><p>' + escape(empty_message) + '</p></section>'}
+</main></div></body></html>"""
+
+
+def _history_matches(
+    customer,
+    entry,
+    search: str,
+    dealership: str,
+    customer_name: str,
+) -> bool:
+    """Apply report search and filter criteria to one completed visit."""
+    haystack = " ".join(
+        (customer.customer_name, customer.vehicle.make, customer.vehicle.model, customer.vehicle.vin)
+    ).lower()
+    return (
+        (not search or search.lower() in haystack)
+        and (not dealership or customer.dealership == dealership)
+        and (not customer_name or customer.customer_name == customer_name)
+    )
+
+
+def _history_row(customer, entry) -> str:
+    """Render one completed visit with all requested history details."""
+    vehicle = f"{customer.vehicle.year} {customer.vehicle.make} {customer.vehicle.model}"
+    notes = entry.notes or "No notes"
+    description = f"<small>{escape(entry.description)}</small>" if entry.description else ""
+    technician = entry.technician or customer.bdc_agent
+    return (
+        f"<tr><td><strong>{escape(customer.customer_name)}</strong>"
+        f"<small>{escape(customer.dealership)}</small></td>"
+        f"<td>{escape(vehicle)}<small>VIN: {escape(customer.vehicle.vin)}</small></td>"
+        f"<td>{entry.service_date.isoformat()}<small>{entry.mileage:,} mi</small></td>"
+        f"<td><strong>{escape(entry.service_type)}</strong>"
+        f"{description}</td>"
+        f"<td>{escape(entry.reason or 'Not recorded')}</td>"
+        f"<td>{escape(technician)}</td><td>{escape(notes)}</td></tr>"
+    )
+
+
 def _appointments_page(state, dealership, agent, query) -> str:
     """Render the weekly appointments calendar and scheduling form."""
     appointments = tuple(
@@ -620,7 +766,12 @@ def _appointment_card(appointment) -> str:
         f'<article class="appointment-card"><strong><a href="/service-center?{escape(customer_query)}">'
         f'{escape(appointment.customer_name)}</a></strong><br>'
         f'VIN: {escape(appointment.vin)}<br>{appointment.scheduled_date.isoformat()} '
-        f'{appointment.scheduled_time.strftime("%H:%M")}</article>'
+        f'{appointment.scheduled_time.strftime("%H:%M")}<br>'
+        f'<small>{escape(appointment.status.title())}'
+        + (f' · {escape(appointment.service_type)}' if appointment.service_type else '')
+        + (f' · {appointment.mileage:,} mi' if appointment.mileage is not None else '')
+        + (f'<br>{escape(appointment.reason)}' if appointment.reason else '')
+        + '</small></article>'
     )
 
 
@@ -670,9 +821,24 @@ def _service_center_page(
         return _service_center_empty_page()
     customer = row.customer
     draft = row.draft
-    body = draft.body if draft else ""
+    body = "" if customer.customer_name in state.composer_cleared else (draft.body if draft else "")
+    service_type_options = _service_type_options()
     draft_language = draft.language_preference if draft else customer.language_preference
     outbox_status = row.outbox.status.value if row.outbox else "not queued"
+    history_html = "".join(
+        (
+            f'<div class="msg in"><div class="msg-head"><strong>{escape(entry.sender)}</strong>'
+            f'<span>{entry.timestamp:%m/%d/%Y, %I:%M %p}</span></div>'
+            f'<div class="msg-body">{escape(entry.body)}</div>'
+            f'<div class="msg-tag">Simulated customer reply &middot; demo only, not a real text</div></div>'
+            if entry.direction == "incoming"
+            else f'<div class="msg out"><div class="msg-head"><strong>You ({escape(entry.sender)})</strong>'
+            f'<span>{entry.timestamp:%m/%d/%Y, %I:%M %p}</span></div>'
+            f'<div class="msg-body">{escape(entry.body)}</div>'
+            f'<div class="msg-tag">{escape(entry.event)} &middot; simulated, not a delivered SMS</div></div>'
+        )
+        for entry in state.message_history(customer.customer_name)
+    ) or '<p class="muted">No message history yet.</p>'
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport"
 content="width=device-width, initial-scale=1"><title>Service Center</title>
@@ -695,11 +861,19 @@ display: grid; grid-template-columns: minmax(15rem, .8fr) minmax(20rem, 1.2fr); 
 .customer-card h2, .panel h2, .service-card h2 {{ margin-top: 0; }} .customer-card strong {{ color: #32145f; }}
 .details {{ line-height: 1.7; }} .message-panel textarea {{ width: 100%; min-height: 10rem; resize: vertical; }}
 .message-actions {{ display: flex; justify-content: flex-end; gap: .35rem; margin-top: .5rem; }}
+.message-columns {{ display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 1rem; }}
+.history {{ max-height: 22rem; overflow-y: auto; border-left: 1px solid #ebe7f4; padding-left: 1rem; }}
+.history h3 {{ margin: 0 0 .5rem; font-size: 1rem; color: #32145f; }}
+.msg {{ margin-bottom: .7rem; }} .msg-head {{ display: flex; justify-content: space-between; gap: .5rem;
+font-size: .8rem; color: #52606d; }} .msg-body {{ margin-top: .2rem; padding: .5rem .7rem; border-radius: .5rem;
+background: #e9e4fb; overflow-wrap: anywhere; }} .msg-tag {{ margin-top: .15rem; font-size: .72rem; color: #667085; }}
+.msg.in .msg-body {{ background: #f0f1f4; }} .reply-form {{ margin-top: .8rem; display: grid; gap: .3rem; }}
 .service-grid {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .7rem; }}
 .service-grid .wide {{ grid-column: 1 / -1; }} @media (max-width: 850px) {{
 .app {{ display: block; }} .sidebar {{ width: 100%; padding: 1rem; }} .brand {{ margin-bottom: .8rem; }}
 .nav {{ grid-template-columns: repeat(5, minmax(0, 1fr)); }} .nav a {{ font-size: .75rem; text-align: center; padding: .55rem .2rem; }}
-.main {{ padding: 1.2rem; }} .layout {{ grid-template-columns: 1fr; }} }}
+.main {{ padding: 1.2rem; }} .layout {{ grid-template-columns: 1fr; }} .message-columns {{ grid-template-columns: 1fr; }}
+.history {{ border-left: 0; padding-left: 0; }} }}
 </style></head><body><div class="app"><aside class="sidebar"><p class="brand">Service Center</p>
 <nav class="nav" aria-label="Main navigation">{_nav("/service-center")}</nav></aside>
 <main class="main"><h1>Service Center</h1><p class="muted">Review customer details, prepare a bilingual reminder,
@@ -716,21 +890,38 @@ and record completed service.</p>
 VIN: {escape(customer.vehicle.vin)}<br>Dealership: {escape(customer.dealership)}<br>
 Assigned BDC Agent: {escape(customer.bdc_agent)}<br>Expected service date: {row.expected_date.isoformat()}<br>
 Reminder status: {escape(draft.status if draft else "none")}<br>Outbox: {escape(outbox_status)}</div></section>
-<section class="panel message-panel"><h2>Message</h2><form method="post">
+<section class="panel message-panel"><h2>Messages</h2><div class="message-columns"><form method="post">
 <input type="hidden" name="return_to" value="service-center"><input type="hidden" name="customer_name"
 value="{escape(customer.customer_name)}">{fields}<input type="hidden" name="message_language"
 value="{escape(draft_language.value)}"><label>Message<textarea name="message_body"
 required>{escape(body)}</textarea></label><div class="message-actions">
 <button name="action" value="save_draft">Save as Draft</button>
-<button name="action" value="send_message">Send Message</button></div></form></section></div>
+<button name="action" value="send_message">Send Message</button></div></form>
+<aside class="history" aria-label="Message History"><h3>Message History</h3>{history_html}
+<form method="post" class="reply-form"><input type="hidden" name="return_to" value="service-center">
+<input type="hidden" name="customer_name" value="{escape(customer.customer_name)}">{fields}
+<label>Simulated customer reply (demo)<input name="reply_body" required></label>
+<button name="action" value="simulate_reply">Add Demo Reply</button></form></aside></div></section></div>
+<script>(function(){{var h=document.querySelector(".history");if(h){{h.scrollTop=h.scrollHeight;}}}})();</script>
 <section class="service-card"><h2>Record Service</h2><form method="post">
 <input type="hidden" name="return_to" value="service-center"><input type="hidden" name="customer_name"
 value="{escape(customer.customer_name)}">{fields}<div class="service-grid"><label>Service Date
 <input type="date" name="service_date" required></label><label>Mileage
-<input type="number" name="mileage" min="0" required></label><label>Service Type
-<select name="service_type" required><option value="">Select type</option><option>Main Shop</option>
-<option>Express</option></select></label><label class="wide">Notes<textarea name="notes"></textarea></label>
+<input type="number" name="mileage" min="0" step="1" value="{customer.vehicle.current_mileage}" required></label><label>Service Type
+<select name="service_type" required>{service_type_options}</select></label>
+<label>Technician<input name="technician" value="{escape(customer.bdc_agent)}"></label>
+<label class="wide">Reason for Visit<input name="reason"></label>
+<label class="wide">Notes<textarea name="notes"></textarea></label>
 </div><button name="action" value="service">Record Service</button></form></section>
+<section class="service-card"><h2>Schedule Appointment</h2><form method="post">
+<input type="hidden" name="return_to" value="service-center"><input type="hidden" name="customer_name"
+value="{escape(customer.customer_name)}">{fields}<div class="service-grid"><label>Appointment Date
+<input type="date" name="appointment_date" required></label><label>Appointment Time
+<input type="time" name="appointment_time" required></label><label>Mileage
+<input type="number" name="mileage" min="0" step="1" value="{customer.vehicle.current_mileage}"></label>
+<label>Service Type<select name="service_type" required>{service_type_options}</select></label>
+<label class="wide">Reason for Visit<input name="reason"></label>
+</div><button name="action" value="schedule_appointment">Schedule Appointment</button></form></section>
 </main></div></body></html>"""
 
 
@@ -774,6 +965,11 @@ def _action(customer_name: str, action: str, label: str, fields: str = "") -> st
     )
 
 
+def _service_type_options() -> str:
+    """Render the only service types accepted for new submissions."""
+    return "".join(f"<option>{escape(name)}</option>" for name in SERVICE_TYPES)
+
+
 def _service_form(customer_name: str, fields: str) -> str:
     """Render the completed-service form for one customer."""
     return (
@@ -783,7 +979,7 @@ def _service_form(customer_name: str, fields: str) -> str:
         f'<input type="date" name="service_date" required></label><label>Mileage'
         f'<input type="number" name="mileage" min="0" placeholder="Mileage" '
         f'required></label></div><div class="service-row"><label>Service type'
-        f'<input name="service_type" placeholder="Service type" required></label>'
+        f'<select name="service_type" required>{_service_type_options()}</select></label>'
         f'<label>Notes<input name="notes" placeholder="Notes"></label></div>'
         f'<button>Record service</button></form>'
     )

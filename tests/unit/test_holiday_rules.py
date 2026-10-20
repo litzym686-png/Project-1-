@@ -30,7 +30,7 @@ def test_due_closed_date_is_deferred_to_next_open_calendar_day():
 
     assert draft is not None
     assert draft.body == (
-        "Hello Test Customer, your expected service date was 2025-05-28. "
+        "Hello Test, your expected service date was 2025-05-28. "
         "Kia is closed for Kia inventory closure, so this reminder is deferred "
         "to 2025-05-30."
     )
@@ -74,7 +74,7 @@ def test_deferred_spanish_draft_survives_review_routing_and_outbox():
     sent = mark_simulated_sent(queued)
 
     assert sent.draft.body == (
-        "Hola Test Customer, su fecha de servicio prevista era 2025-04-15. "
+        "Hola Test, su fecha de servicio prevista era 2025-04-15. "
         "Kia estará cerrado por Cierre de Kia, así que este recordatorio se "
         "pospone al 2025-04-16."
     )

@@ -1,6 +1,7 @@
 """Typed fictional message drafts with no sending behavior."""
 
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
 
 from app.models.customer import CustomerLanguage
@@ -20,6 +21,19 @@ class MessageStatus(str, Enum):
     REVIEW_READY = "review_ready"
     APPROVED = "approved"
     REJECTED = "rejected"
+
+
+@dataclass(frozen=True)
+class MessageLogEntry:
+    """One outgoing Service Center event; no real delivery is ever implied."""
+
+    customer_name: str
+    sender: str
+    body: str
+    event: str
+    timestamp: datetime
+    direction: str = "outgoing"
+    simulated: bool = True
 
 
 @dataclass(frozen=True)

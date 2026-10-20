@@ -57,7 +57,7 @@ def test_missing_language_preference_defaults_to_english():
 
     assert draft is not None
     assert draft.body == (
-        "Hello Test Customer, your 2024 Kia Sportage is due for service. "
+        "Hello Test, your 2024 Kia Sportage is due for service. "
         "Please contact Kia to schedule an appointment. "
         "The expected service date was 2025-05-28."
     )
@@ -71,7 +71,7 @@ def test_spanish_language_preference_generates_spanish_draft():
 
     assert draft is not None
     assert draft.body == (
-        "Hola Test Customer, su 2024 Kia Sportage necesita servicio. "
+        "Hola Test, su 2024 Kia Sportage necesita servicio. "
         "Comuníquese con Kia para programar una cita. "
         "La fecha de servicio prevista era 2025-04-15."
     )
@@ -84,3 +84,19 @@ def test_invalid_language_preference_is_rejected():
 
 def test_not_due_customer_does_not_get_a_draft():
     assert generate_service_reminder(_customer(), date(2025, 5, 27)) is None
+
+
+def test_automated_reminders_greet_first_name_only_in_both_languages():
+    from dataclasses import replace
+
+    from app.data.seed_customers import FICTIONAL_CUSTOMERS
+
+    for customer in FICTIONAL_CUSTOMERS[:6]:
+        for language, greeting in ((CustomerLanguage.ENGLISH, "Hello"), (CustomerLanguage.SPANISH, "Hola")):
+            draft = generate_service_reminder(
+                replace(customer, language_preference=language), date(2030, 1, 1)
+            )
+            first, *rest = customer.customer_name.split()
+            assert draft.body.startswith(f"{greeting} {first},")
+            assert all(part not in draft.body for part in rest)
+            assert draft.customer_name == customer.customer_name

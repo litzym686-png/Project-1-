@@ -15,4 +15,8 @@ class Appointment:
     scheduled_date: date
     scheduled_time: time
     is_demo: bool = False
+    status: str = "scheduled"
+    service_type: str | None = None
+    reason: str | None = None
+    mileage: int | None = None
 

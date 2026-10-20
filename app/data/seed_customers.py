@@ -56,7 +56,7 @@ def _customer(
         model=model,
         year=2020 + number % 5,
         vin=f"FIC{number:05d}",
-        current_mileage=12000 + number * 1375,
+        current_mileage=(20000, 30000, 45000, 60000)[(number - 1) % 4],
     ),
     last_service_date=date(2025, (number - 1) % 12 + 1, 15),
     service_pattern=pattern,

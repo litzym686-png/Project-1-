@@ -120,6 +120,14 @@ by an HttpOnly server-side session cookie. Use the visible **Logout** button on
 Settings to invalidate the session. The server sends no-cache headers for
 protected responses so a logged-out browser cannot restore them from history.
 
+Reports is the completed vehicle service-history view. Recording a completed
+visit in Service Center updates the vehicle's history and scheduling values;
+only completed visits appear there, never message drafts or simulated outbox
+deliveries. History is persisted in the user-local file
+`~/.service-center/service_history.json` by default (or an injected path in
+tests). Reports **Reset** clears its filters only and never deletes history.
+No completed demo visits are created automatically.
+
 ### Windows one-click launcher
 
 Double-click `start_dashboard.bat` in the repository folder. It securely
@@ -136,3 +144,15 @@ For a desktop shortcut, right-click `start_dashboard.bat`, choose **Show more
 options > Send to > Desktop (create shortcut)**, and launch the shortcut.
 The browser cannot start the server by itself; start the launcher first. Do not
 start a second launcher while one dashboard is already running on port 8000.
+
+## Local storage (SQLite)
+
+The dashboard stores data in a local SQLite file at `~\.service-center\dashboard.db` (outside the repo, built-in `sqlite3`, no paid services).
+
+- Persisted: stable customer IDs, each customer's current mileage, completed service visits (with reason, work performed, the mileage at that visit, technician, notes), appointments (date, time, status, service type, reason, mileage, agent), and message history (outgoing demo messages and simulated customer replies, with direction and timestamps).
+- Mileage rules: the Record Service and appointment forms prefill the customer's latest saved mileage. Recording a visit raises the current mileage but never lowers it, and every visit keeps its own mileage for Reports. Existing saved values are never overwritten by seed values.
+- Appointments: recording a visit completes the same-day scheduled appointment for that customer (matched by customer ID) without creating a duplicate; walk-ins are saved without one. New columns are added to existing databases additively on startup (after the automatic backup).
+- On each start an existing database is integrity-checked and backed up to `~\.service-center\backups`. A corrupt database is never replaced; it is copied aside and startup stops with an error.
+- An existing `service_history.json` is backed up and imported once; it is never deleted.
+- SMS is simulated only. History entries are labelled as simulated and nothing is sent to real phones.
+- Drafts and the outbox remain in memory.

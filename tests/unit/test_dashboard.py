@@ -8,9 +8,17 @@ import pytest
 
 from app.models.customer import CustomerLanguage
 from app.models.holiday import HolidayCalendar, HolidayClosure
+from app.data.seed_customers import FICTIONAL_CUSTOMERS
 from app.models.outbox import OutboxStatus
 from app.services.dashboard import DashboardState
-from app.dashboard import DashboardHandler, _page, _row, _service_center_page, _single
+from app.dashboard import (
+    DashboardHandler,
+    _page,
+    _reports_page,
+    _row,
+    _service_center_page,
+    _single,
+)
 
 
 def _dashboard() -> DashboardState:
@@ -167,9 +175,62 @@ def test_service_center_renders_navigation_selection_editor_and_service_form():
     assert "Send Message" in rendered
     assert '<label>Language<select name="message_language">' not in rendered
     assert 'name="message_language"\nvalue="en"' in rendered
-    assert '<option>Main Shop</option>' in rendered
-    assert '<option>Express</option>' in rendered
+    assert '<option>Main Shop</option><option>Express Shop</option>' in rendered
+    assert '<select name="service_type" required>' in rendered
+    assert 'name="description"' not in rendered
+    assert 'name="notes"' in rendered
+    assert "document.querySelector(\".history\")" in rendered
+    assert 'name="technician"' in rendered
     assert "Record Service" in rendered
+
+
+def test_reports_page_filters_completed_history_by_vehicle_and_customer():
+    dashboard = _dashboard()
+    dashboard.record_service_visit(
+        "Test Customer", date(2025, 5, 1), 1200, "Inspection",
+        description="Brake inspection", technician="Maya",
+    )
+    dashboard.record_service_visit(
+        "Test Customer", date(2025, 6, 1), 1500, "Tire rotation",
+        description="Rotated tires", technician="Maya",
+    )
+
+    html = _reports_page(
+        dashboard,
+        {"q": ["Sportage"], "dealership": ["Kia"], "customer": ["Test Customer"]},
+    )
+
+    assert "3 completed visits" in html
+    assert html.index("Tire rotation") < html.index("Inspection") < html.index("Oil change")
+    assert "Rotated tires" in html
+    assert "Current mileage: 1,500 mi" in html
+    assert "Last service: 2025-06-01" in html
+    assert "Next expected service: " in html
+    assert 'name="from"' not in html and 'name="to"' not in html
+    assert "<label>From" not in html and "<label>To" not in html
+
+    other = _reports_page(dashboard, {"dealership": ["Chevrolet"]})
+    assert "Tire rotation" not in other
+
+
+def test_reports_page_shows_selected_vehicle_header_and_empty_state():
+    dashboard = _dashboard()
+    html = _reports_page(dashboard, {"customer": ["Spanish Customer"]})
+
+    assert "Spanish Customer" in html
+    assert "VIN: " in html
+    assert "Current mileage:" in html
+    assert "Last service:" in html
+    assert "Next expected service:" in html
+    assert "No completed service visits have been recorded yet for this vehicle." in html
+
+
+def test_reports_customer_selector_contains_all_seed_customers():
+    html = _reports_page(DashboardState(), {})
+
+    assert len(FICTIONAL_CUSTOMERS) == 20
+    for customer in FICTIONAL_CUSTOMERS:
+        assert f'value="{customer.customer_name}"' in html
 
 
 def test_service_center_save_and_send_use_existing_simulated_workflow():
@@ -398,6 +459,17 @@ def _post(httpd, action, extra="", filters=FILTERS):
     return _request(httpd, "POST", "/", f"{body}&{extra}&{filters}")
 
 
+def test_reports_link_and_route_serve_vehicle_service_history_page(server):
+    httpd, _ = server
+    _, _, dashboard_html = _request(httpd, "GET", "/")
+    assert 'href="/reports"' in dashboard_html
+
+    status, _, reports_html = _request(httpd, "GET", "/reports")
+    assert status == 200
+    assert "<title>Vehicle Service History</title>" in reports_html
+    assert "<title>Vehicle Service History</title>" not in dashboard_html
+
+
 def test_auth_login_logout_protects_routes_and_preserves_state(server):
     httpd, state = server
     delattr(httpd, "test_cookie")
@@ -536,7 +608,7 @@ def test_service_visit_post_updates_expected_date_and_preserves_filters(server):
             "action": "service",
             "service_date": "2027-01-01",
             "mileage": "2200",
-            "service_type": "Brake inspection",
+            "service_type": "Express Shop",
             "notes": "Completed in shop",
             "dealership": "Chevrolet",
             "agent": "Cassandra",
@@ -645,6 +717,34 @@ def test_service_center_get_and_save_draft_preserve_filters(server):
     assert state.rows("Kia", "Lucas")[0].outbox.status is OutboxStatus.SIMULATED_SENT
 
 
+def test_service_center_message_history_is_per_customer_and_simulated(server):
+    httpd, state = server
+    _, _, empty = _request(httpd, "GET", "/service-center?customer=Camila+Brooks")
+    assert "No message history yet." in empty
+    for name, text, action in (
+        ("Camila Brooks", "Borrador uno.", "save_draft"),
+        ("Camila Brooks", "Mensaje enviado.", "send_message"),
+    ):
+        body = urlencode(
+            {"action": action, "return_to": "service-center", "customer_name": name,
+             "message_body": text, "message_language": "es"}
+        )
+        assert _request(httpd, "POST", "/service-center", body)[0] == 303
+
+    _, _, camila = _request(httpd, "GET", "/service-center?customer=Camila+Brooks")
+    assert "Borrador uno." in camila and "Mensaje enviado." in camila
+    assert "Draft saved" in camila and "Simulated send" in camila
+    assert "simulated, not a delivered SMS" in camila
+    assert "No message history yet." not in camila
+    assert [e.event for e in state.message_history("Camila Brooks")] == [
+        "Draft saved", "Simulated send"
+    ]
+
+    _, _, maya = _request(httpd, "GET", "/service-center?customer=Maya+Rodriguez")
+    assert "Borrador uno." not in maya and "Mensaje enviado." not in maya
+    assert "No message history yet." in maya
+
+
 def test_appointments_http_schedule_redirects_and_renders_existing_vin(server):
     httpd, state = server
     body = urlencode(
@@ -701,3 +801,97 @@ def test_main_customer_rows_do_not_render_workflow_action_forms(server):
     assert 'value="queue"' not in html
     assert 'value="send"' not in html
     assert 'value="service"' not in html
+
+
+def test_send_message_and_reply_repeat_without_error_and_keep_filters(server):
+    httpd, state = server
+    extra = urlencode({"return_to": "service-center", "message_body": "Hello again", "message_language": "es"})
+    for _ in range(3):
+        status, location, _html = _post(httpd, "send_message", extra)
+        assert status == 303
+        assert location.startswith("/service-center?")
+        assert "dealership=Chevrolet" in location and "agent=Cassandra" in location
+        assert "language=es" in location and "customer=" in location
+    for n in range(3):
+        status, location, _html = _post(
+            httpd, "simulate_reply", urlencode({"return_to": "service-center", "reply_body": f"Reply {n}"})
+        )
+        assert status == 303 and location.startswith("/service-center?")
+    assert len(state.message_history(CUSTOMER)) == 6
+    _, _, page = _request(httpd, "GET", location)
+    assert "Reply 2" in page and "Action failed" not in page
+
+
+def test_send_clears_composer_but_keeps_default_reminder_and_history(server):
+    httpd, state = server
+    name = next(r.customer.customer_name for r in state.rows() if r.draft)
+    original = next(r.draft for r in state.rows() if r.customer.customer_name == name)
+    query = urlencode({"customer": name})
+    _, _, before = _request(httpd, "GET", f"/service-center?{query}")
+    assert original.body.split("\n")[0][:20] in before
+
+    body = urlencode({"customer_name": name, "action": "send_message", "return_to": "service-center",
+                      "message_body": "Typed note", "message_language": "en"})
+    status, location, _ = _request(httpd, "POST", "/", body)
+    assert status == 303
+    _, _, after = _request(httpd, "GET", location)
+    assert 'name="message_body"\nrequired></textarea>' in after
+    assert "Typed note" in after
+    assert next(r.draft for r in state.rows() if r.customer.customer_name == name) == original
+
+    state.composer_cleared.discard(name)
+    state.save_draft(name, "Saved draft", CustomerLanguage.ENGLISH)
+    _, _, page = _request(httpd, "GET", location)
+    assert "Saved draft" in page
+
+
+def test_service_type_is_limited_to_main_or_express_shop(server):
+    httpd, state = server
+    base = {"customer_name": CUSTOMER, "action": "service", "service_date": "2027-01-01", "mileage": "2300",
+            "notes": "ok", "return_to": "service-center"}
+    status, _, html = _request(httpd, "POST", "/", urlencode({**base, "service_type": "Oil change"}))
+    assert status == 400 and "Main Shop or Express Shop" in html
+    cust = [c for c in state.customers if c.customer_name == CUSTOMER][0]
+    assert not any(e.service_type == "Oil change" for e in cust.service_history)
+    for kind in ("Main Shop", "Express Shop"):
+        status, _, _ = _request(httpd, "POST", "/", urlencode({**base, "service_type": kind}))
+        assert status == 303
+    cust = [c for c in state.customers if c.customer_name == CUSTOMER][0]
+    assert cust.service_history[-1].service_type == "Express Shop"
+    assert cust.service_history[-1].description is None
+
+
+def test_service_center_prefills_mileage_and_schedules_then_reports_reason(server):
+    httpd, state = server
+    cust = [c for c in state.customers if c.customer_name == CUSTOMER][0]
+    query = urlencode({"customer": CUSTOMER, "dealership": "Chevrolet", "agent": "Cassandra", "language": "es"})
+    _, _, page = _request(httpd, "GET", f"/service-center?{query}")
+    expected = f'name="mileage" min="0" step="1" value="{cust.vehicle.current_mileage}"'
+    assert page.count(expected) == 2
+    assert 'name="appointment_date"' in page
+
+    base = {"customer_name": CUSTOMER, "return_to": "service-center", "mileage": "48000"}
+    status, _, _ = _request(httpd, "POST", "/", urlencode({
+        **base, "action": "schedule_appointment", "appointment_date": "2027-02-02",
+        "appointment_time": "09:30", "service_type": "Main Shop", "reason": "Brake check"}))
+    assert status == 303
+    _, _, appts = _request(httpd, "GET", "/appointments?date=2027-02-02")
+    assert "Brake check" in appts and "Main Shop" in appts and "48,000 mi" in appts and "Scheduled" in appts
+
+    status, _, _ = _request(httpd, "POST", "/", urlencode({
+        **base, "action": "service", "service_date": "2027-02-02", "service_type": "Main Shop",
+        "technician": "Tracy", "reason": "Brake check", "notes": "Pads replaced"}))
+    assert status == 303
+    _, _, reports = _request(httpd, "GET", "/reports")
+    assert "REASON FOR VISIT" in reports and "Brake check" in reports and "Pads replaced" in reports
+    assert "48,000 mi" in reports and "Tracy" in reports
+
+
+def test_invalid_mileage_and_service_type_on_schedule_are_rejected(server):
+    httpd, _ = server
+    body = {"customer_name": CUSTOMER, "action": "schedule_appointment", "appointment_date": "2027-02-02",
+            "appointment_time": "09:30", "return_to": "service-center"}
+    status, _, _ = _request(httpd, "POST", "/", urlencode({**body, "mileage": "-5"}))
+    assert status == 400
+    status, _, _ = _request(httpd, "POST", "/", urlencode({**body, "service_type": "Detail"}))
+    assert status == 400

@@ -56,16 +56,17 @@ def _reminder_body(
     deferred_date: date | None,
 ) -> str:
     """Build the reminder copy in the customer's preferred language."""
+    first_name = customer.customer_name.split()[0]
     if closure is not None and deferred_date is not None:
         if customer.language_preference is CustomerLanguage.SPANISH:
             return (
-                f"Hola {customer.customer_name}, su fecha de servicio prevista era "
+                f"Hola {first_name}, su fecha de servicio prevista era "
                 f"{expected_date.isoformat()}. {customer.dealership} estará cerrado "
                 f"por {closure.name}, así que este recordatorio se pospone al "
                 f"{deferred_date.isoformat()}."
             )
         return (
-            f"Hello {customer.customer_name}, your expected service date was "
+            f"Hello {first_name}, your expected service date was "
             f"{expected_date.isoformat()}. {customer.dealership} is closed for "
             f"{closure.name}, so this reminder is deferred to "
             f"{deferred_date.isoformat()}."
@@ -76,7 +77,7 @@ def _reminder_body(
         else _ENGLISH_REMINDER_TEMPLATE
     )
     return template.format(
-        name=customer.customer_name,
+        name=first_name,
         year=customer.vehicle.year,
         make=customer.vehicle.make,
         model=customer.vehicle.model,

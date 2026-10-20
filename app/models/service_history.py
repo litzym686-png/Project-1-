@@ -12,6 +12,9 @@ class ServiceHistoryEntry:
     mileage: int
     service_type: str
     notes: str | None = None
+    description: str | None = None
+    technician: str | None = None
+    reason: str | None = None
 
     def __post_init__(self) -> None:
         if self.mileage < 0:
